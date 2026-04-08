@@ -1,0 +1,16 @@
+version: '3.8'
+services:
+  napolitano:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - ADMIN_PASSWORD=admin123
+      - MP_ACCESS_TOKEN=TEST-0000000000000000-000000-00000000000000000000000000000000-000000000
+      - SITE_URL=http://localhost:3000
+      - WA_NUMBER=5491134240505
+    volumes:
+      - ./data:/app/data
+      - ./public/uploads:/app/public/uploads
+    restart: unless-stopped
