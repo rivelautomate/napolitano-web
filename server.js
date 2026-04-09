@@ -14,6 +14,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
 const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN || 'TEST-0000000000000000-000000-00000000000000000000000000000000-000000000';
 const SITE_URL = process.env.SITE_URL || `http://localhost:${PORT}`;
 const WA_NUMBER = process.env.WA_NUMBER || '5491134240505';
+const N8N_WEBHOOK_URL = process.env.N8N_WEBHOOK_URL || 'https://nuevo-proyecto-rvl-n8n.gatibv.easypanel.host/webhook/napolitano-venta';
 
 // MercadoPago
 const mpClient = new MercadoPagoConfig({ accessToken: MP_ACCESS_TOKEN });
@@ -270,9 +271,55 @@ app.post('/api/crear-pago', async (req, res) => {
 app.post('/api/webhook-mp', async (req, res) => {
   try {
     const { type, data } = req.body;
-    if (type === 'payment') {
-      // In production, verify payment with MP API
-      console.log('Payment notification:', data.id);
+    if (type === 'payment' && data?.id) {
+      // Verify payment with MercadoPago
+      const paymentRes = await fetch(`https://api.mercadopago.com/v1/payments/${data.id}`, {
+        headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` }
+      });
+      const payment = await paymentRes.json();
+      
+      if (payment.status === 'approved') {
+        // Update order in DB
+        const orderId = payment.external_reference;
+        if (orderId) {
+          db.run("UPDATE orders SET payment_status='approved', mp_payment_id=? WHERE id=?", [String(data.id), orderId]);
+          saveDB();
+          
+          // Get order details
+          const orderResult = db.exec(`SELECT * FROM orders WHERE id=${orderId}`);
+          if (orderResult.length > 0) {
+            const columns = orderResult[0].columns;
+            const row = orderResult[0].values[0];
+            const order = {};
+            columns.forEach((col, i) => order[col] = row[i]);
+            
+            // Notify n8n
+            try {
+              await fetch(N8N_WEBHOOK_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  evento: 'pago_confirmado',
+                  pedido_id: orderId,
+                  cliente: order.customer_name,
+                  email: order.customer_email,
+                  telefono: order.customer_phone,
+                  dni: order.customer_dni,
+                  productos: JSON.parse(order.products_json || '[]'),
+                  total: order.total,
+                  metodo_pago: 'MercadoPago',
+                  direccion: JSON.parse(order.shipping_address || '{}'),
+                  mp_payment_id: String(data.id),
+                  fecha: new Date().toISOString()
+                })
+              });
+              console.log('n8n notified for order', orderId);
+            } catch (n8nErr) {
+              console.error('n8n notification failed:', n8nErr.message);
+            }
+          }
+        }
+      }
     }
     res.sendStatus(200);
   } catch (err) {
