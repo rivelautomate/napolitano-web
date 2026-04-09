@@ -649,7 +649,7 @@ function submitCheckout(){
     document.getElementById('checkoutSubmit').textContent='Procesando...';document.getElementById('checkoutSubmit').disabled=true;
     fetch('/api/crear-pago',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:cart.map(function(item){return{name:item.name,price:item.price}}),customer:d})})
     .then(function(r){return r.json()}).then(function(data){
-      if(data.ok){window.location.href=data.sandbox_init_point||data.init_point}
+      if(data.ok){window.location.href=data.init_point}
       else{showToast('Error al crear el pago');document.getElementById('checkoutSubmit').textContent='Pagar con MercadoPago';document.getElementById('checkoutSubmit').disabled=false}
     }).catch(function(){showToast('Error de conexión');document.getElementById('checkoutSubmit').textContent='Pagar con MercadoPago';document.getElementById('checkoutSubmit').disabled=false})
   }
