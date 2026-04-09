@@ -71,6 +71,7 @@ async function initDB() {
     customer_name TEXT,
     customer_email TEXT,
     customer_dni TEXT,
+    customer_phone TEXT,
     shipping_address TEXT,
     payment_method TEXT,
     payment_status TEXT DEFAULT 'pending',
@@ -196,6 +197,23 @@ app.put('/api/products/:id/toggle', requireAdmin, (req, res) => {
   res.json({ ok: true, active: result[0]?.values[0][0] });
 });
 
+// ─── API: CASH ORDERS ───
+app.post('/api/orden-efectivo', (req, res) => {
+  try {
+    const { items, customer } = req.body;
+    const total = items.reduce((s, i) => s + i.price, 0);
+    db.run(`INSERT INTO orders (products_json, total, customer_name, customer_email, customer_dni, customer_phone, shipping_address, payment_method, payment_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'efectivo', 'pending')`,
+      [JSON.stringify(items), total, customer.nombre + ' ' + customer.apellido, customer.email, customer.dni, customer.phone || '',
+       JSON.stringify({ calle: customer.calle, localidad: customer.localidad, provincia: customer.provincia, cp: customer.cp, edificio: customer.edificio })]);
+    saveDB();
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Order error:', err);
+    res.status(500).json({ ok: false });
+  }
+});
+
 // ─── API: MERCADOPAGO ───
 app.post('/api/crear-pago', async (req, res) => {
   try {
@@ -211,9 +229,9 @@ app.post('/api/crear-pago', async (req, res) => {
     const total = items.reduce((s, i) => s + i.price, 0);
 
     // Save order
-    db.run(`INSERT INTO orders (products_json, total, customer_name, customer_email, customer_dni, shipping_address, payment_method, payment_status)
-      VALUES (?, ?, ?, ?, ?, ?, 'mercadopago', 'pending')`,
-      [JSON.stringify(items), total, customer.nombre + ' ' + customer.apellido, customer.email, customer.dni,
+    db.run(`INSERT INTO orders (products_json, total, customer_name, customer_email, customer_dni, customer_phone, shipping_address, payment_method, payment_status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'mercadopago', 'pending')`,
+      [JSON.stringify(items), total, customer.nombre + ' ' + customer.apellido, customer.email, customer.dni, customer.phone || '',
        JSON.stringify({ calle: customer.calle, localidad: customer.localidad, provincia: customer.provincia, cp: customer.cp, edificio: customer.edificio })]);
     saveDB();
 
@@ -305,7 +323,7 @@ function getStoreHTML(productCards, catBtns) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>NapolitanoBA — Accesorios Premium</title>
+<title>NapolitanoBA — Buenos Aires</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Bebas+Neue&display=swap" rel="stylesheet">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -463,7 +481,7 @@ footer{background:var(--black);color:var(--white);padding:48px 40px 32px;text-al
 </div></nav>
 <div class="mobile-menu" id="mobileMenu"><a onclick="scrollTo_('inicio');closeMenu()">Inicio</a><a onclick="scrollTo_('productos');closeMenu()">Productos</a><a onclick="scrollTo_('footer');closeMenu()">Contacto</a></div>
 <section class="hero" id="inicio"><div class="hero-content">
-  <div class="hero-brand">NAPOLITANO</div><p class="hero-tagline">Accesorios Premium — Buenos Aires</p>
+  <div class="hero-brand">NAPOLITANO</div><p class="hero-tagline">Desde 2025 — Buenos Aires</p>
   <div class="hero-cta"><span onclick="scrollTo_('productos')">Ver Productos</span></div>
 </div><div class="hero-scroll"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.5" stroke="currentColor"><path d="M19 9l-7 7-7-7"/></svg></div></section>
 <div class="marquee-bar"><div class="marquee-track"><span>Envíos a CABA por motomensajería</span><span>·</span><span>Pagá con MercadoPago o Efectivo</span><span>·</span><span>Podés abonar al recibir</span><span>·</span><span>Envíos a CABA por motomensajería</span><span>·</span><span>Pagá con MercadoPago o Efectivo</span><span>·</span><span>Podés abonar al recibir</span><span>·</span><span>Envíos a CABA por motomensajería</span><span>·</span><span>Pagá con MercadoPago o Efectivo</span><span>·</span><span>Podés abonar al recibir</span><span>·</span></div></div>
@@ -519,7 +537,8 @@ footer{background:var(--black);color:var(--white);padding:48px 40px 32px;text-al
       <div class="checkout-section"><h4>Resumen del pedido</h4><div class="checkout-summary" id="checkoutSummary"></div></div>
       <div class="checkout-section"><h4>Datos personales</h4>
         <div class="form-row"><div class="form-group"><label>Nombre *</label><input id="cNombre" placeholder="Tu nombre"><span class="error-msg">Requerido</span></div><div class="form-group"><label>Apellido *</label><input id="cApellido" placeholder="Tu apellido"><span class="error-msg">Requerido</span></div></div>
-        <div class="form-row"><div class="form-group"><label>DNI *</label><input id="cDni" placeholder="42123456" inputmode="numeric"><span class="error-msg">Requerido</span></div><div class="form-group"><label>Email *</label><input id="cEmail" type="email" placeholder="tu@email.com"><span class="error-msg">Email inválido</span></div></div>
+        <div class="form-row"><div class="form-group"><label>DNI *</label><input id="cDni" placeholder="42123456" inputmode="numeric"><span class="error-msg">Requerido</span></div><div class="form-group"><label>Teléfono *</label><input id="cPhone" placeholder="1134240505" inputmode="tel"><span class="error-msg">Requerido</span></div></div>
+        <div class="form-row"><div class="form-group"><label>Email *</label><input id="cEmail" type="email" placeholder="tu@email.com" style="width:100%"><span class="error-msg">Email inválido</span></div></div>
       </div>
       <div class="checkout-section"><h4>Datos de envío</h4>
         <div class="form-row"><div class="form-group" style="flex:2"><label>Calle y número *</label><input id="cCalle" placeholder="Av. Corrientes 1234"><span class="error-msg">Requerido</span></div></div>
@@ -567,15 +586,16 @@ function closeCheckout(){document.getElementById('checkoutOverlay').classList.re
 function selectPayment(m,el){paymentMethod=m;document.querySelectorAll('.payment-opt').forEach(function(o){o.classList.remove('active')});el.classList.add('active');updateSubmitBtn()}
 function updateSubmitBtn(){var btn=document.getElementById('checkoutSubmit');if(paymentMethod==='mp'){btn.textContent='Pagar con MercadoPago';btn.className='checkout-submit mp'}else{btn.textContent='Confirmar Pedido por WhatsApp';btn.className='checkout-submit'}}
 function submitCheckout(){
-  var fields=[{id:'cNombre',req:true},{id:'cApellido',req:true},{id:'cDni',req:true},{id:'cEmail',req:true,email:true},{id:'cCalle',req:true},{id:'cLocalidad',req:true},{id:'cProvincia',req:true},{id:'cCp',req:true}];
+  var fields=[{id:'cNombre',req:true},{id:'cApellido',req:true},{id:'cDni',req:true},{id:'cPhone',req:true},{id:'cEmail',req:true,email:true},{id:'cCalle',req:true},{id:'cLocalidad',req:true},{id:'cProvincia',req:true},{id:'cCp',req:true}];
   var valid=true;fields.forEach(function(f){var inp=document.getElementById(f.id);var val=inp.value.trim();var err=false;if(f.req&&!val)err=true;if(f.email&&val&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(val))err=true;inp.classList.toggle('error',err);if(err)valid=false});
   if(!valid){showToast('Completá todos los campos obligatorios');return}
-  var d={nombre:document.getElementById('cNombre').value.trim(),apellido:document.getElementById('cApellido').value.trim(),dni:document.getElementById('cDni').value.trim(),email:document.getElementById('cEmail').value.trim(),calle:document.getElementById('cCalle').value.trim(),localidad:document.getElementById('cLocalidad').value.trim(),provincia:document.getElementById('cProvincia').value.trim(),cp:document.getElementById('cCp').value.trim(),edificio:document.getElementById('cEdificio').value.trim()};
+  var d={nombre:document.getElementById('cNombre').value.trim(),apellido:document.getElementById('cApellido').value.trim(),dni:document.getElementById('cDni').value.trim(),phone:document.getElementById('cPhone').value.trim(),email:document.getElementById('cEmail').value.trim(),calle:document.getElementById('cCalle').value.trim(),localidad:document.getElementById('cLocalidad').value.trim(),provincia:document.getElementById('cProvincia').value.trim(),cp:document.getElementById('cCp').value.trim(),edificio:document.getElementById('cEdificio').value.trim()};
   if(paymentMethod==='efectivo'){
     var msg='Hola! Quiero hacer un pedido en NapolitanoBA (Efectivo):\\n\\n*Productos:*\\n';
     cart.forEach(function(item){msg+='• '+item.name+' - $'+item.price.toLocaleString('es-AR')+'\\n'});
-    msg+='\\n*Total: $'+getTotal().toLocaleString('es-AR')+'*\\n\\n*Datos:*\\n'+d.nombre+' '+d.apellido+'\\nDNI: '+d.dni+'\\nEmail: '+d.email+'\\n\\n*Envío:*\\n'+d.calle+', '+d.localidad+', '+d.provincia+' (CP '+d.cp+')';
+    msg+='\\n*Total: $'+getTotal().toLocaleString('es-AR')+'*\\n\\n*Datos:*\\n'+d.nombre+' '+d.apellido+'\\nDNI: '+d.dni+'\\nTel: '+d.phone+'\\nEmail: '+d.email+'\\n\\n*Envío:*\\n'+d.calle+', '+d.localidad+', '+d.provincia+' (CP '+d.cp+')';
     if(d.edificio)msg+='\\n'+d.edificio;msg+='\\n\\nPago en efectivo al recibir';
+    fetch('/api/orden-efectivo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:cart.map(function(item){return{name:item.name,price:item.price}}),customer:d})});
     window.open('https://wa.me/'+WA+'?text='+encodeURIComponent(msg),'_blank');
     showToast('Pedido enviado por WhatsApp');cart=[];updateCartUI();closeCheckout()
   } else {
@@ -630,8 +650,8 @@ function renderAdmin(products, orders) {
   const orderRows = orders.map(o => {
     const items = JSON.parse(o.products_json || '[]');
     const itemNames = items.map(i => i.name).join(', ');
-    return `<tr><td>#${o.id}</td><td>${o.customer_name || '-'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${itemNames}</td><td>$${(o.total||0).toLocaleString('es-AR')}</td><td>${o.payment_method || '-'}</td><td><span class="status ${o.payment_status === 'approved' ? 'on' : 'off'}">${o.payment_status || 'pending'}</span></td><td>${o.created_at || '-'}</td></tr>`;
-  }).join('') || '<tr><td colspan="7" style="text-align:center;padding:40px;color:#666">No hay pedidos aún</td></tr>';
+    return `<tr><td>#${o.id}</td><td>${o.customer_name || '-'}<br><small style="color:#888">${o.customer_email || ''}</small></td><td>${o.customer_phone || '-'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${itemNames}</td><td>$${(o.total||0).toLocaleString('es-AR')}</td><td>${o.payment_method || '-'}</td><td><span class="status ${o.payment_status === 'approved' ? 'on' : 'off'}">${o.payment_status || 'pending'}</span></td><td>${o.created_at || '-'}</td></tr>`;
+  }).join('') || '<tr><td colspan="8" style="text-align:center;padding:40px;color:#666">No hay pedidos aún</td></tr>';
 
   return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Admin — NapolitanoBA</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
@@ -712,7 +732,7 @@ tr.inactive{opacity:0.5}
     <div class="card">
       <h2>Pedidos Recientes</h2>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>ID</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Pago</th><th>Estado</th><th>Fecha</th></tr></thead>
+        <thead><tr><th>ID</th><th>Cliente</th><th>Teléfono</th><th>Productos</th><th>Total</th><th>Pago</th><th>Estado</th><th>Fecha</th></tr></thead>
         <tbody>${orderRows}</tbody>
       </table></div>
     </div>
