@@ -932,43 +932,41 @@ function renderPaymentSuccess(orderId, order) {
   
   if (order) {
     const items = JSON.parse(order.products_json || '[]');
-    productsHtml = items.map(i => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #222"><span>${i.name}</span><span>$${(i.price||0).toLocaleString('es-AR')}</span></div>`).join('');
-    totalHtml = `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;font-size:16px;border-top:1px solid #444;margin-top:8px"><span>Total</span><span>$${(order.total||0).toLocaleString('es-AR')}</span></div>`;
-    customerHtml = `<div style="font-size:13px;color:#aaa;line-height:1.8">${order.customer_name || ''}<br>DNI: ${order.customer_dni || ''}<br>Tel: ${order.customer_phone || ''}<br>Email: ${order.customer_email || ''}</div>`;
-    const addr = JSON.parse(order.shipping_address || '{}');
-    addressHtml = `<div style="font-size:13px;color:#aaa;line-height:1.8">${[addr.calle, addr.localidad, addr.provincia, addr.cp ? 'CP ' + addr.cp : '', addr.edificio].filter(Boolean).join(', ')}</div>`;
+    productsHtml = items.map(function(i) { return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #222"><span>' + i.name + '</span><span>$' + (i.price||0).toLocaleString('es-AR') + '</span></div>'; }).join('');
+    totalHtml = '<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;font-size:16px;border-top:1px solid #444;margin-top:8px"><span>Total</span><span>$' + (order.total||0).toLocaleString('es-AR') + '</span></div>';
+    customerHtml = '<div style="font-size:13px;color:#aaa;line-height:1.8">' + (order.customer_name || '') + '<br>DNI: ' + (order.customer_dni || '') + '<br>Tel: ' + (order.customer_phone || '') + '<br>Email: ' + (order.customer_email || '') + '</div>';
+    var addr = JSON.parse(order.shipping_address || '{}');
+    addressHtml = '<div style="font-size:13px;color:#aaa;line-height:1.8">' + [addr.calle, addr.localidad, addr.provincia, addr.cp ? 'CP ' + addr.cp : '', addr.edificio].filter(Boolean).join(', ') + '</div>';
   }
 
-  return \`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>¡Pago Exitoso! — NapolitanoBA</title>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
-<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;background:#111;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.container{max-width:520px;width:100%}
-.header{text-align:center;margin-bottom:32px}
-.header h1{font-family:'Bebas Neue',sans-serif;font-size:42px;letter-spacing:3px;color:#4caf50;margin-bottom:8px}
-.header p{font-size:13px;color:#888}
-.card{background:#1a1a1a;border:1px solid #222;padding:24px;margin-bottom:16px}
-.card h3{font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#666;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #222}
-.wa-banner{background:#1a3a1a;border:1px solid #25D366;padding:20px;text-align:center;margin-bottom:16px}
-.wa-banner p{font-size:13px;color:#aaa;margin-bottom:12px;line-height:1.6}
-.wa-banner a{display:inline-block;padding:12px 32px;background:#25D366;color:#fff;text-decoration:none;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;transition:background 0.3s}
-.wa-banner a:hover{background:#1ebe57}
-.back{display:block;text-align:center;padding:16px;border:1px solid #333;color:#fff;text-decoration:none;font-size:12px;letter-spacing:2px;text-transform:uppercase;transition:all 0.3s}
-.back:hover{background:#fff;color:#111}
-</style></head><body>
-<div class="container">
-  <div class="header">
-    <h1>¡Pago Exitoso!</h1>
-    <p>Pedido #\${orderId || '-'} confirmado</p>
-  </div>
-  <div class="card"><h3>Productos</h3>\${productsHtml}\${totalHtml}</div>
-  <div class="card"><h3>Tus datos</h3>\${customerHtml}</div>
-  <div class="card"><h3>Dirección de envío</h3>\${addressHtml}</div>
-  <div class="wa-banner">
-    <p>📦 Comunicate por WhatsApp para coordinar el envío de tu pedido #\${orderId || '-'}</p>
-    <a href="https://wa.me/${WA_NUMBER}?text=\${encodeURIComponent('Hola! Hice el pedido #' + (orderId || '') + ' y quiero coordinar el envío')}" target="_blank">Coordinar envío por WhatsApp</a>
-  </div>
-  <a href="/" class="back">Volver a la tienda</a>
-</div></body></html>\`;
+  var oid = orderId || '-';
+  var waMsg = encodeURIComponent('Hola! Hice el pedido #' + (orderId || '') + ' y quiero coordinar el envío');
+
+  return '<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Pago Exitoso — NapolitanoBA</title>'
+  + '<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">'
+  + '<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:"Outfit",sans-serif;background:#111;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}'
+  + '.container{max-width:520px;width:100%}'
+  + '.header{text-align:center;margin-bottom:32px}'
+  + '.header h1{font-family:"Bebas Neue",sans-serif;font-size:42px;letter-spacing:3px;color:#4caf50;margin-bottom:8px}'
+  + '.header p{font-size:13px;color:#888}'
+  + '.card{background:#1a1a1a;border:1px solid #222;padding:24px;margin-bottom:16px}'
+  + '.card h3{font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#666;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #222}'
+  + '.wa-banner{background:#1a3a1a;border:1px solid #25D366;padding:20px;text-align:center;margin-bottom:16px}'
+  + '.wa-banner p{font-size:13px;color:#aaa;margin-bottom:12px;line-height:1.6}'
+  + '.wa-banner a{display:inline-block;padding:12px 32px;background:#25D366;color:#fff;text-decoration:none;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;transition:background 0.3s}'
+  + '.wa-banner a:hover{background:#1ebe57}'
+  + '.back{display:block;text-align:center;padding:16px;border:1px solid #333;color:#fff;text-decoration:none;font-size:12px;letter-spacing:2px;text-transform:uppercase;transition:all 0.3s}'
+  + '.back:hover{background:#fff;color:#111}'
+  + '</style></head><body>'
+  + '<div class="container">'
+  + '<div class="header"><h1>Pago Exitoso!</h1><p>Pedido #' + oid + ' confirmado</p></div>'
+  + '<div class="card"><h3>Productos</h3>' + productsHtml + totalHtml + '</div>'
+  + '<div class="card"><h3>Tus datos</h3>' + customerHtml + '</div>'
+  + '<div class="card"><h3>Direccion de envio</h3>' + addressHtml + '</div>'
+  + '<div class="wa-banner"><p>Comunicate por WhatsApp para coordinar el envio de tu pedido #' + oid + '</p>'
+  + '<a href="https://wa.me/' + WA_NUMBER + '?text=' + waMsg + '" target="_blank">Coordinar envio por WhatsApp</a></div>'
+  + '<a href="/" class="back">Volver a la tienda</a>'
+  + '</div></body></html>';
 }
 
 function renderPaymentResult(status, orderId) {
