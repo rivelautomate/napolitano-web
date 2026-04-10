@@ -270,62 +270,102 @@ app.post('/api/crear-pago', async (req, res) => {
 // Webhook MP
 app.post('/api/webhook-mp', async (req, res) => {
   try {
-    const { type, data } = req.body;
-    if (type === 'payment' && data?.id) {
-      // Verify payment with MercadoPago
-      const paymentRes = await fetch(`https://api.mercadopago.com/v1/payments/${data.id}`, {
+    console.log('=== WEBHOOK MP RECEIVED ===');
+    console.log('Body:', JSON.stringify(req.body));
+    console.log('Query:', JSON.stringify(req.query));
+    
+    let paymentId = null;
+    
+    if (req.body?.data?.id) {
+      paymentId = req.body.data.id;
+    } else if (req.query?.id && (req.query?.topic === 'payment' || req.query?.type === 'payment')) {
+      paymentId = req.query.id;
+    } else if (req.body?.resource) {
+      const match = req.body.resource.match(/payments\/(\d+)/);
+      if (match) paymentId = match[1];
+    } else if (req.query?.['data.id']) {
+      paymentId = req.query['data.id'];
+    }
+    
+    console.log('Payment ID extracted:', paymentId);
+    
+    if (paymentId) {
+      console.log('Fetching payment from MP...');
+      const paymentRes = await fetch(`https://api.mercadopago.com/v1/payments/${paymentId}`, {
         headers: { 'Authorization': `Bearer ${MP_ACCESS_TOKEN}` }
       });
       const payment = await paymentRes.json();
+      console.log('Payment status:', payment.status, 'External ref:', payment.external_reference);
       
       if (payment.status === 'approved') {
-        // Update order in DB
         const orderId = payment.external_reference;
+        
         if (orderId) {
-          db.run("UPDATE orders SET payment_status='approved', mp_payment_id=? WHERE id=?", [String(data.id), orderId]);
+          db.run("UPDATE orders SET payment_status='approved', mp_payment_id=? WHERE id=?", [String(paymentId), orderId]);
           saveDB();
-          
-          // Get order details
-          const orderResult = db.exec(`SELECT * FROM orders WHERE id=${orderId}`);
-          if (orderResult.length > 0) {
-            const columns = orderResult[0].columns;
-            const row = orderResult[0].values[0];
-            const order = {};
-            columns.forEach((col, i) => order[col] = row[i]);
-            
-            // Notify n8n
-            try {
-              await fetch(N8N_WEBHOOK_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  evento: 'pago_confirmado',
-                  pedido_id: orderId,
-                  cliente: order.customer_name,
-                  email: order.customer_email,
-                  telefono: order.customer_phone,
-                  dni: order.customer_dni,
-                  productos: JSON.parse(order.products_json || '[]'),
-                  total: order.total,
-                  metodo_pago: 'MercadoPago',
-                  direccion: JSON.parse(order.shipping_address || '{}'),
-                  mp_payment_id: String(data.id),
-                  fecha: new Date().toISOString()
-                })
-              });
-              console.log('n8n notified for order', orderId);
-            } catch (n8nErr) {
-              console.error('n8n notification failed:', n8nErr.message);
+          console.log('Order updated:', orderId);
+        }
+        
+        const n8nData = {
+          evento: 'pago_confirmado',
+          pedido_id: orderId || 'sin_referencia',
+          total: payment.transaction_amount,
+          metodo_pago: 'MercadoPago',
+          mp_payment_id: String(paymentId),
+          payer_email: payment.payer?.email || '',
+          fecha: new Date().toISOString()
+        };
+        
+        if (orderId) {
+          try {
+            const orderResult = db.exec(`SELECT * FROM orders WHERE id=${orderId}`);
+            if (orderResult.length > 0) {
+              const columns = orderResult[0].columns;
+              const row = orderResult[0].values[0];
+              const order = {};
+              columns.forEach((col, i) => order[col] = row[i]);
+              n8nData.cliente = order.customer_name;
+              n8nData.email = order.customer_email;
+              n8nData.telefono = order.customer_phone;
+              n8nData.dni = order.customer_dni;
+              n8nData.productos = JSON.parse(order.products_json || '[]');
+              n8nData.direccion = JSON.parse(order.shipping_address || '{}');
             }
+          } catch (dbErr) {
+            console.error('DB error:', dbErr.message);
           }
         }
+        
+        console.log('Sending to n8n:', N8N_WEBHOOK_URL);
+        try {
+          const n8nRes = await fetch(N8N_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(n8nData)
+          });
+          console.log('n8n response:', n8nRes.status);
+          console.log('=== N8N NOTIFIED OK ===');
+        } catch (n8nErr) {
+          console.error('n8n failed:', n8nErr.message);
+        }
+      } else {
+        console.log('Payment not approved, status:', payment.status);
       }
+    } else {
+      console.log('No payment ID found in webhook');
     }
+    
     res.sendStatus(200);
   } catch (err) {
     console.error('Webhook error:', err);
     res.sendStatus(500);
   }
+});
+
+// Also handle GET for MP webhook verification
+app.get('/api/webhook-mp', (req, res) => {
+  console.log('=== WEBHOOK MP GET ===', JSON.stringify(req.query));
+  res.sendStatus(200);
 });
 
 // Payment result pages
