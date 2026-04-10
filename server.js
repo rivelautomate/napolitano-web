@@ -385,13 +385,28 @@ app.get('/api/webhook-mp', (req, res) => {
 });
 
 // Payment result pages
-app.get('/pago-exitoso', (req, res) => { res.send(renderPaymentResult('success', req.query.order)); });
+app.get('/pago-exitoso', (req, res) => {
+  const orderId = req.query.order;
+  let orderData = null;
+  if (orderId) {
+    try {
+      const result = db.exec(`SELECT * FROM orders WHERE id=${orderId}`);
+      if (result.length > 0) {
+        const columns = result[0].columns;
+        const row = result[0].values[0];
+        orderData = {};
+        columns.forEach((col, i) => orderData[col] = row[i]);
+      }
+    } catch(e) {}
+  }
+  res.send(renderPaymentSuccess(orderId, orderData));
+});
 app.get('/pago-fallido', (req, res) => { res.send(renderPaymentResult('failure', req.query.order)); });
 app.get('/pago-pendiente', (req, res) => { res.send(renderPaymentResult('pending', req.query.order)); });
 
 // ─── API: ORDERS (for admin) ───
 function getOrders() {
-  const results = db.exec("SELECT * FROM orders ORDER BY id DESC LIMIT 50");
+  const results = db.exec("SELECT * FROM orders WHERE payment_method='mercadopago' ORDER BY id DESC");
   if (!results.length) return [];
   const columns = results[0].columns;
   return results[0].values.map(row => {
@@ -610,7 +625,7 @@ footer{background:var(--black);color:var(--white);padding:48px 40px 32px;text-al
   <div class="footer-divider"></div>
   <div class="footer-copy">&copy; 2026 NapolitanoBA — Buenos Aires, Argentina</div>
 </div></footer>
-<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeProduct()">
+<div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <button class="modal-close" onclick="closeProduct()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
     <div class="modal-img"><img id="modalImg" src="" alt=""></div>
@@ -633,7 +648,7 @@ footer{background:var(--black);color:var(--white);padding:48px 40px 32px;text-al
   <div class="cart-items" id="cartItems"><div class="cart-empty" id="cartEmpty">Tu carrito está vacío</div></div>
   <div class="cart-footer"><div class="cart-total"><span>Total</span><span id="cartTotal">$0</span></div><button class="cart-checkout" onclick="openCheckout()">Finalizar Compra</button></div>
 </div>
-<div class="checkout-overlay" id="checkoutOverlay" onclick="if(event.target===this)closeCheckout()">
+<div class="checkout-overlay" id="checkoutOverlay">
   <div class="checkout-modal">
     <div class="checkout-header"><h3>Finalizar Compra</h3><button class="modal-close" onclick="closeCheckout()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button></div>
     <div class="checkout-body">
@@ -644,6 +659,7 @@ footer{background:var(--black);color:var(--white);padding:48px 40px 32px;text-al
         <div class="form-row"><div class="form-group"><label>Email *</label><input id="cEmail" type="email" placeholder="tu@email.com" style="width:100%"><span class="error-msg">Email inválido</span></div></div>
       </div>
       <div class="checkout-section"><h4>Datos de envío</h4>
+        <div style="background:var(--off-white);padding:12px 16px;margin-bottom:16px;font-size:11px;color:var(--mid-gray);line-height:1.6;border-left:3px solid var(--dark)">📦 El envío se coordina por WhatsApp después de confirmar el pago. Te vamos a contactar para acordar día y horario de entrega.</div>
         <div class="form-row"><div class="form-group" style="flex:2"><label>Calle y número *</label><input id="cCalle" placeholder="Av. Corrientes 1234"><span class="error-msg">Requerido</span></div></div>
         <div class="form-row"><div class="form-group"><label>Localidad *</label><input id="cLocalidad" placeholder="CABA"><span class="error-msg">Requerido</span></div><div class="form-group"><label>Provincia *</label><input id="cProvincia" value="Buenos Aires"><span class="error-msg">Requerido</span></div></div>
         <div class="form-row"><div class="form-group"><label>Código Postal *</label><input id="cCp" placeholder="1043" inputmode="numeric"><span class="error-msg">Requerido</span></div><div class="form-group"><label>Edificio / Piso (opcional)</label><input id="cEdificio" placeholder="Piso 3, Depto B"></div></div>
@@ -677,8 +693,10 @@ function openProduct(el){var p=parseInt(el.dataset.price);currentProduct={name:e
 function closeProduct(){document.getElementById('modalOverlay').classList.remove('open');document.body.style.overflow=''}
 function consultWa(){window.open('https://wa.me/'+WA+'?text='+encodeURIComponent('Hola, estoy interesado en '+currentProduct.name),'_blank')}
 var cart=[];
-function addToCart(){cart.push(Object.assign({},currentProduct));updateCartUI();closeProduct();showToast('Agregado al carrito')}
-function removeFromCart(i){cart.splice(i,1);updateCartUI()}
+try{var saved=sessionStorage.getItem('napolitano_cart');if(saved)cart=JSON.parse(saved)}catch(e){}
+function saveCart(){try{sessionStorage.setItem('napolitano_cart',JSON.stringify(cart))}catch(e){}}
+function addToCart(){cart.push(Object.assign({},currentProduct));saveCart();updateCartUI();closeProduct();showToast('Agregado al carrito')}
+function removeFromCart(i){cart.splice(i,1);saveCart();updateCartUI()}
 function getTotal(){return cart.reduce(function(s,item){return s+item.price},0)}
 function updateCartUI(){var badge=document.getElementById('cartBadge');badge.textContent=cart.length;badge.classList.toggle('show',cart.length>0);var container=document.getElementById('cartItems');container.querySelectorAll('.cart-item').forEach(function(el){el.remove()});document.getElementById('cartEmpty').style.display=cart.length===0?'block':'none';cart.forEach(function(item,i){var div=document.createElement('div');div.className='cart-item';div.innerHTML='<div class="cart-item-img"><img src="'+item.img+'" alt="'+item.name+'"></div><div class="cart-item-info"><div class="cart-item-name">'+item.name+'</div><div class="cart-item-size">Talle: '+item.size+'</div><div class="cart-item-price">$'+item.price.toLocaleString('es-AR')+'</div></div><button class="cart-item-remove" onclick="removeFromCart('+i+')"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>';container.appendChild(div)});document.getElementById('cartTotal').textContent='$'+getTotal().toLocaleString('es-AR')}
 function openCart(){document.getElementById('cartOverlay').classList.add('open');document.getElementById('cartDrawer').classList.add('open');document.body.style.overflow='hidden'}
@@ -700,12 +718,12 @@ function submitCheckout(){
     if(d.edificio)msg+='\\n'+d.edificio;msg+='\\n\\nPago en efectivo al recibir';
     fetch('/api/orden-efectivo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:cart.map(function(item){return{name:item.name,price:item.price}}),customer:d})});
     window.open('https://wa.me/'+WA+'?text='+encodeURIComponent(msg),'_blank');
-    showToast('Pedido enviado por WhatsApp');cart=[];updateCartUI();closeCheckout()
+    showToast('Pedido enviado por WhatsApp');cart=[];saveCart();updateCartUI();closeCheckout()
   } else {
     document.getElementById('checkoutSubmit').textContent='Procesando...';document.getElementById('checkoutSubmit').disabled=true;
     fetch('/api/crear-pago',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({items:cart.map(function(item){return{name:item.name,price:item.price}}),customer:d})})
     .then(function(r){return r.json()}).then(function(data){
-      if(data.ok){window.location.href=data.init_point}
+      if(data.ok){cart=[];saveCart();updateCartUI();window.location.href=data.init_point}
       else{showToast('Error al crear el pago');document.getElementById('checkoutSubmit').textContent='Pagar con MercadoPago';document.getElementById('checkoutSubmit').disabled=false}
     }).catch(function(){showToast('Error de conexión');document.getElementById('checkoutSubmit').textContent='Pagar con MercadoPago';document.getElementById('checkoutSubmit').disabled=false})
   }
@@ -752,9 +770,24 @@ function renderAdmin(products, orders) {
 
   const orderRows = orders.map(o => {
     const items = JSON.parse(o.products_json || '[]');
-    const itemNames = items.map(i => i.name).join(', ');
-    return `<tr><td>#${o.id}</td><td>${o.customer_name || '-'}<br><small style="color:#888">${o.customer_email || ''}</small></td><td>${o.customer_phone || '-'}</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${itemNames}</td><td>$${(o.total||0).toLocaleString('es-AR')}</td><td>${o.payment_method || '-'}</td><td><span class="status ${o.payment_status === 'approved' ? 'on' : 'off'}">${o.payment_status || 'pending'}</span></td><td>${o.created_at || '-'}</td></tr>`;
-  }).join('') || '<tr><td colspan="8" style="text-align:center;padding:40px;color:#666">No hay pedidos aún</td></tr>';
+    const itemsList = items.map(i => '• ' + i.name + ' - $' + (i.price||0).toLocaleString('es-AR')).join('<br>');
+    const addr = JSON.parse(o.shipping_address || '{}');
+    const addrText = [addr.calle, addr.localidad, addr.provincia, addr.cp ? 'CP ' + addr.cp : '', addr.edificio].filter(Boolean).join(', ');
+    const statusClass = o.payment_status === 'approved' ? 'on' : 'off';
+    const statusText = o.payment_status === 'approved' ? 'Aprobado' : o.payment_status === 'pending' ? 'Pendiente' : o.payment_status || 'Pendiente';
+    return `<tr>
+      <td style="font-weight:700">#${o.id}</td>
+      <td><strong>${o.customer_name || '-'}</strong><br><small style="color:#888">DNI: ${o.customer_dni || '-'}</small></td>
+      <td>${o.customer_phone || '-'}</td>
+      <td><small>${o.customer_email || '-'}</small></td>
+      <td style="max-width:250px">${itemsList || '-'}</td>
+      <td style="font-weight:700;font-size:15px">$${(o.total||0).toLocaleString('es-AR')}</td>
+      <td><span class="status ${statusClass}">${statusText}</span></td>
+      <td style="max-width:200px;font-size:11px;color:#888">${addrText || '-'}</td>
+      <td style="font-size:11px;color:#888">${o.mp_payment_id || '-'}</td>
+      <td style="font-size:11px;color:#888;white-space:nowrap">${o.created_at || '-'}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="10" style="text-align:center;padding:40px;color:#666">No hay pedidos por MercadoPago aún</td></tr>';
 
   return `<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Admin — NapolitanoBA</title>
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
@@ -835,7 +868,7 @@ tr.inactive{opacity:0.5}
     <div class="card">
       <h2>Pedidos Recientes</h2>
       <div style="overflow-x:auto"><table>
-        <thead><tr><th>ID</th><th>Cliente</th><th>Teléfono</th><th>Productos</th><th>Total</th><th>Pago</th><th>Estado</th><th>Fecha</th></tr></thead>
+        <thead><tr><th>N° Pedido</th><th>Cliente</th><th>Teléfono</th><th>Email</th><th>Productos</th><th>Total</th><th>Estado</th><th>Dirección</th><th>ID Pago MP</th><th>Fecha</th></tr></thead>
         <tbody>${orderRows}</tbody>
       </table></div>
     </div>
@@ -889,6 +922,53 @@ function updateProduct(e){
 function deleteProduct(id){if(!confirm('¿Eliminar este producto?'))return;
   fetch('/api/products/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok){toast('Producto eliminado');setTimeout(()=>location.reload(),500)}}).catch(()=>toast('Error'))}
 </script></body></html>`;
+}
+
+function renderPaymentSuccess(orderId, order) {
+  let productsHtml = '';
+  let customerHtml = '';
+  let addressHtml = '';
+  let totalHtml = '';
+  
+  if (order) {
+    const items = JSON.parse(order.products_json || '[]');
+    productsHtml = items.map(i => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #222"><span>${i.name}</span><span>$${(i.price||0).toLocaleString('es-AR')}</span></div>`).join('');
+    totalHtml = `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;font-size:16px;border-top:1px solid #444;margin-top:8px"><span>Total</span><span>$${(order.total||0).toLocaleString('es-AR')}</span></div>`;
+    customerHtml = `<div style="font-size:13px;color:#aaa;line-height:1.8">${order.customer_name || ''}<br>DNI: ${order.customer_dni || ''}<br>Tel: ${order.customer_phone || ''}<br>Email: ${order.customer_email || ''}</div>`;
+    const addr = JSON.parse(order.shipping_address || '{}');
+    addressHtml = `<div style="font-size:13px;color:#aaa;line-height:1.8">${[addr.calle, addr.localidad, addr.provincia, addr.cp ? 'CP ' + addr.cp : '', addr.edificio].filter(Boolean).join(', ')}</div>`;
+  }
+
+  return \`<!DOCTYPE html><html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>¡Pago Exitoso! — NapolitanoBA</title>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Bebas+Neue&display=swap" rel="stylesheet">
+<style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:'Outfit',sans-serif;background:#111;color:#fff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
+.container{max-width:520px;width:100%}
+.header{text-align:center;margin-bottom:32px}
+.header h1{font-family:'Bebas Neue',sans-serif;font-size:42px;letter-spacing:3px;color:#4caf50;margin-bottom:8px}
+.header p{font-size:13px;color:#888}
+.card{background:#1a1a1a;border:1px solid #222;padding:24px;margin-bottom:16px}
+.card h3{font-size:11px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:#666;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #222}
+.wa-banner{background:#1a3a1a;border:1px solid #25D366;padding:20px;text-align:center;margin-bottom:16px}
+.wa-banner p{font-size:13px;color:#aaa;margin-bottom:12px;line-height:1.6}
+.wa-banner a{display:inline-block;padding:12px 32px;background:#25D366;color:#fff;text-decoration:none;font-size:12px;font-weight:600;letter-spacing:1px;text-transform:uppercase;transition:background 0.3s}
+.wa-banner a:hover{background:#1ebe57}
+.back{display:block;text-align:center;padding:16px;border:1px solid #333;color:#fff;text-decoration:none;font-size:12px;letter-spacing:2px;text-transform:uppercase;transition:all 0.3s}
+.back:hover{background:#fff;color:#111}
+</style></head><body>
+<div class="container">
+  <div class="header">
+    <h1>¡Pago Exitoso!</h1>
+    <p>Pedido #\${orderId || '-'} confirmado</p>
+  </div>
+  <div class="card"><h3>Productos</h3>\${productsHtml}\${totalHtml}</div>
+  <div class="card"><h3>Tus datos</h3>\${customerHtml}</div>
+  <div class="card"><h3>Dirección de envío</h3>\${addressHtml}</div>
+  <div class="wa-banner">
+    <p>📦 Comunicate por WhatsApp para coordinar el envío de tu pedido #\${orderId || '-'}</p>
+    <a href="https://wa.me/${WA_NUMBER}?text=\${encodeURIComponent('Hola! Hice el pedido #' + (orderId || '') + ' y quiero coordinar el envío')}" target="_blank">Coordinar envío por WhatsApp</a>
+  </div>
+  <a href="/" class="back">Volver a la tienda</a>
+</div></body></html>\`;
 }
 
 function renderPaymentResult(status, orderId) {
