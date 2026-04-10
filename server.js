@@ -39,7 +39,13 @@ const upload = multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } });
 
 // ─── DATABASE ───
 let db;
-const DB_PATH = path.join(__dirname, 'data.sqlite');
+const DATA_DIR = path.join(__dirname, 'data');
+const DB_PATH = path.join(DATA_DIR, 'database.sqlite');
+
+// Ensure data directory exists
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 async function initDB() {
   const SQL = await initSQL();
@@ -104,9 +110,18 @@ async function initDB() {
 }
 
 function saveDB() {
-  const data = db.export();
-  const buffer = Buffer.from(data);
-  fs.writeFileSync(DB_PATH, buffer);
+  try {
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(DB_PATH, buffer);
+  } catch (err) {
+    console.error('Error saving DB:', err.message);
+  }
+}
+
+function getLastInsertId() {
+  const result = db.exec("SELECT last_insert_rowid()");
+  return result[0]?.values[0][0] || 0;
 }
 
 function getProducts(activeOnly = true) {
@@ -234,9 +249,10 @@ app.post('/api/crear-pago', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, 'mercadopago', 'pending')`,
       [JSON.stringify(items), total, customer.nombre + ' ' + customer.apellido, customer.email, customer.dni, customer.phone || '',
        JSON.stringify({ calle: customer.calle, localidad: customer.localidad, provincia: customer.provincia, cp: customer.cp, edificio: customer.edificio })]);
+    
+    const orderId = getLastInsertId();
+    console.log('New order created with ID:', orderId);
     saveDB();
-
-    const orderId = db.exec("SELECT last_insert_rowid()")[0].values[0][0];
 
     const prefData = await preference.create({
       body: {
@@ -898,5 +914,16 @@ initDB().then(() => {
     console.log(`🚀 NapolitanoBA corriendo en http://localhost:${PORT}`);
     console.log(`📋 Admin: http://localhost:${PORT}/admin`);
     console.log(`🔑 Contraseña admin: ${ADMIN_PASSWORD}`);
+    console.log(`💾 DB path: ${DB_PATH}`);
+    console.log(`🔗 N8N webhook: ${N8N_WEBHOOK_URL}`);
   });
+
+  // Auto-save DB every 30 seconds to prevent data loss
+  setInterval(() => {
+    try { saveDB(); } catch(e) { console.error('Auto-save error:', e.message); }
+  }, 30000);
+
+  // Save DB on shutdown
+  process.on('SIGTERM', () => { console.log('Shutting down...'); saveDB(); process.exit(0); });
+  process.on('SIGINT', () => { console.log('Shutting down...'); saveDB(); process.exit(0); });
 });
