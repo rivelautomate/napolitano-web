@@ -65,11 +65,29 @@ async function initDB() {
     category TEXT DEFAULT 'Accesorios',
     size TEXT DEFAULT 'Único',
     image TEXT,
+    images TEXT,
     badge TEXT,
     active INTEGER DEFAULT 1,
     sort_order INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`);
+
+  // Migration: add images column if it doesn't exist (for DBs created before multi-image support)
+  try {
+    const cols = db.exec("PRAGMA table_info(products)")[0]?.values || [];
+    const hasImages = cols.some(c => c[1] === 'images');
+    if (!hasImages) {
+      db.run("ALTER TABLE products ADD COLUMN images TEXT");
+      const rows = db.exec("SELECT id, image FROM products WHERE image IS NOT NULL AND image != ''");
+      if (rows.length) {
+        const stmt = db.prepare("UPDATE products SET images=? WHERE id=?");
+        rows[0].values.forEach(([id, img]) => stmt.run([JSON.stringify([img]), id]));
+        stmt.free();
+      }
+    }
+  } catch (e) {
+    console.error('Migration error:', e.message);
+  }
 
   db.run(`CREATE TABLE IF NOT EXISTS orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,7 +108,7 @@ async function initDB() {
   // Seed products if empty
   const count = db.exec("SELECT COUNT(*) FROM products")[0]?.values[0][0] || 0;
   if (count === 0) {
-    const stmt = db.prepare("INSERT INTO products (name, description, price, category, badge, image, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    const stmt = db.prepare("INSERT INTO products (name, description, price, category, badge, image, images, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     const seed = [
       ["Bandolera Prada Style", "Bandolera compacta con diseño inspirado en alta costura. Correa ajustable y cierre magnético. Ideal para el día a día.", 45000, "Accesorios", "Nuevo", "/uploads/bandolera_prada.jpg"],
       ["Bandolera Urbana Texturizada", "Diseño exclusivo con textura premium. Compartimiento principal amplio con bolsillo interno. Estilo único para destacar.", 38000, "Accesorios", "", "/uploads/bandolera_rara.jpg"],
@@ -103,7 +121,7 @@ async function initDB() {
       ["Mochila Urban White", "Mochila en cuero sintético blanco premium. Compartimiento para notebook, bolsillos laterales y cierre YKK. Elegancia urbana.", 55000, "Accesorios", "Nuevo", "/uploads/mochila_blanca.jpg"],
       ["Mochila Urban Black", "La versión negra de nuestra mochila insignia. Material waterproof, costuras reforzadas. Perfecta para el día a día con estilo.", 55000, "Accesorios", "", "/uploads/mochila_negra.jpg"],
     ];
-    seed.forEach((p, i) => { stmt.run([...p, i]); });
+    seed.forEach((p, i) => { stmt.run([...p, JSON.stringify([p[5]]), i]); });
     stmt.free();
     saveDB();
   }
@@ -124,6 +142,15 @@ function getLastInsertId() {
   return result[0]?.values[0][0] || 0;
 }
 
+function parseImages(p) {
+  let imgs = [];
+  if (p.images) {
+    try { imgs = JSON.parse(p.images) || []; } catch (e) { imgs = []; }
+  }
+  if (!imgs.length && p.image) imgs = [p.image];
+  return imgs.filter(Boolean);
+}
+
 function getProducts(activeOnly = true) {
   const where = activeOnly ? "WHERE active = 1" : "";
   const results = db.exec(`SELECT * FROM products ${where} ORDER BY sort_order ASC, id ASC`);
@@ -132,6 +159,7 @@ function getProducts(activeOnly = true) {
   return results[0].values.map(row => {
     const obj = {};
     columns.forEach((col, i) => obj[col] = row[i]);
+    obj.imagesArr = parseImages(obj);
     return obj;
   });
 }
@@ -174,28 +202,34 @@ app.get('/admin', requireAdmin, (req, res) => {
 });
 
 // ─── API: PRODUCTS ───
-app.post('/api/products', requireAdmin, upload.single('image'), (req, res) => {
+app.post('/api/products', requireAdmin, upload.array('images', 10), (req, res) => {
   const { name, description, price, category, badge, size } = req.body;
-  const image = req.file ? `/uploads/${req.file.filename}` : null;
+  const newPaths = (req.files || []).map(f => `/uploads/${f.filename}`);
+  const image = newPaths[0] || null;
+  const imagesJson = JSON.stringify(newPaths);
   const maxOrder = db.exec("SELECT MAX(sort_order) FROM products")[0]?.values[0][0] || 0;
-  
-  db.run("INSERT INTO products (name, description, price, category, badge, size, image, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-    [name, description || '', parseInt(price), category || 'Accesorios', badge || '', size || 'Único', image, maxOrder + 1]);
+
+  db.run("INSERT INTO products (name, description, price, category, badge, size, image, images, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [name, description || '', parseInt(price), category || 'Accesorios', badge || '', size || 'Único', image, imagesJson, maxOrder + 1]);
   saveDB();
   res.json({ ok: true });
 });
 
-app.put('/api/products/:id', requireAdmin, upload.single('image'), (req, res) => {
+app.put('/api/products/:id', requireAdmin, upload.array('images', 10), (req, res) => {
   const { name, description, price, category, badge, size, active } = req.body;
   const id = req.params.id;
-  
-  if (req.file) {
-    db.run("UPDATE products SET name=?, description=?, price=?, category=?, badge=?, size=?, image=?, active=? WHERE id=?",
-      [name, description || '', parseInt(price), category || 'Accesorios', badge || '', size || 'Único', `/uploads/${req.file.filename}`, active !== undefined ? parseInt(active) : 1, id]);
-  } else {
-    db.run("UPDATE products SET name=?, description=?, price=?, category=?, badge=?, size=?, active=? WHERE id=?",
-      [name, description || '', parseInt(price), category || 'Accesorios', badge || '', size || 'Único', active !== undefined ? parseInt(active) : 1, id]);
+
+  let existing = [];
+  if (req.body.existingImages) {
+    try { existing = JSON.parse(req.body.existingImages) || []; } catch (e) { existing = []; }
   }
+  const newPaths = (req.files || []).map(f => `/uploads/${f.filename}`);
+  const allImages = [...existing.filter(Boolean), ...newPaths];
+  const primaryImage = allImages[0] || null;
+  const imagesJson = JSON.stringify(allImages);
+
+  db.run("UPDATE products SET name=?, description=?, price=?, category=?, badge=?, size=?, image=?, images=?, active=? WHERE id=?",
+    [name, description || '', parseInt(price), category || 'Accesorios', badge || '', size || 'Único', primaryImage, imagesJson, active !== undefined ? parseInt(active) : 1, id]);
   saveDB();
   res.json({ ok: true });
 });
@@ -421,12 +455,17 @@ function renderStore(products, categories) {
   const allCats = ['Todos', 'Remeras', 'Bermudas', 'Buzos', 'Pantalones', 'Conjuntos', 'Zapatillas', 'Accesorios', 'Perfumes'];
   
   const productCards = products.map(p => {
-    const img = p.image || '/public/placeholder.png';
+    const imgs = (p.imagesArr && p.imagesArr.length) ? p.imagesArr : [p.image || '/public/placeholder.png'];
+    const img = imgs[0];
     const badge = p.badge ? `<div class="product-badge">${p.badge}</div>` : '';
+    const moreBadge = imgs.length > 1 ? `<div class="product-more-imgs">📷 ${imgs.length}</div>` : '';
     const shortDesc = (p.description || '').split('.')[0] + '.';
     const priceF = '$' + p.price.toLocaleString('es-AR');
-    return `<div class="product-card reveal" data-name="${p.name}" data-desc="${p.description || ''}" data-price="${p.price}" data-cat="${p.category}" data-img="${img}" data-size="${p.size || 'Único'}" onclick="openProduct(this)">
-      <div class="product-img-wrap"><img src="${img}" alt="${p.name}" loading="lazy">${badge}</div>
+    const imgsAttr = JSON.stringify(imgs).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    const desc = (p.description || '').replace(/"/g, '&quot;');
+    const name = p.name.replace(/"/g, '&quot;');
+    return `<div class="product-card reveal" data-name="${name}" data-desc="${desc}" data-price="${p.price}" data-cat="${p.category}" data-img="${img}" data-imgs="${imgsAttr}" data-size="${p.size || 'Único'}" onclick="openProduct(this)">
+      <div class="product-img-wrap"><img src="${img}" alt="${name}" loading="lazy">${badge}${moreBadge}</div>
       <div class="product-info"><div class="product-name">${p.name}</div><div class="product-desc-short">${shortDesc}</div><div class="product-price">${priceF}</div></div></div>`;
   }).join('');
 
@@ -507,7 +546,23 @@ a{text-decoration:none;color:inherit}button{cursor:pointer}
 @keyframes modalIn{from{opacity:0;transform:translateY(16px) scale(0.98)}to{opacity:1;transform:none}}
 .modal-close{position:absolute;top:14px;right:14px;z-index:10;width:34px;height:34px;border-radius:50%;border:none;background:var(--off-white);display:flex;align-items:center;justify-content:center;transition:background 0.2s}
 .modal-close:hover{background:var(--light-gray)}.modal-close svg{width:16px;height:16px}
-.modal-img{aspect-ratio:3/4;overflow:hidden;background:var(--off-white)}.modal-img img{width:100%;height:100%;object-fit:cover}
+.modal-img-col{display:flex;flex-direction:column;min-width:0}
+.modal-img{aspect-ratio:3/4;overflow:hidden;background:var(--off-white);position:relative}.modal-img img{width:100%;height:100%;object-fit:cover;transition:opacity 0.25s}
+.modal-arrow{position:absolute;top:50%;transform:translateY(-50%);width:40px;height:40px;border-radius:50%;border:none;background:rgba(255,255,255,0.85);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;cursor:pointer;z-index:5;transition:background 0.2s}
+.modal-arrow:hover{background:#fff}.modal-arrow svg{width:18px;height:18px}
+.modal-arrow.prev{left:12px}.modal-arrow.next{right:12px}
+.modal-img.has-many .modal-arrow{display:flex}
+.modal-dots{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:none;gap:6px;z-index:5}
+.modal-img.has-many .modal-dots{display:flex}
+.modal-dots span{width:7px;height:7px;border-radius:50%;background:rgba(255,255,255,0.5);transition:background 0.2s;cursor:pointer}
+.modal-dots span.active{background:#fff}
+.modal-thumbs{display:flex;gap:8px;padding:10px 12px;background:var(--off-white);overflow-x:auto;scrollbar-width:thin}
+.modal-thumbs.hidden{display:none}
+.modal-thumbs::-webkit-scrollbar{height:4px}.modal-thumbs::-webkit-scrollbar-thumb{background:#ccc;border-radius:2px}
+.modal-thumb{flex-shrink:0;width:54px;height:72px;border:2px solid transparent;cursor:pointer;overflow:hidden;background:#fff;transition:border-color 0.2s}
+.modal-thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.modal-thumb.active{border-color:var(--dark)}
+.product-more-imgs{position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.6);color:#fff;font-size:10px;padding:3px 8px;border-radius:12px;font-weight:500;letter-spacing:0.5px}
 .modal-details{padding:36px 32px;display:flex;flex-direction:column;justify-content:center}
 .modal-category{font-size:10px;letter-spacing:3px;text-transform:uppercase;color:var(--green);font-weight:600;margin-bottom:6px}
 .modal-name{font-family:'Bebas Neue',sans-serif;font-size:34px;letter-spacing:2px;margin-bottom:6px;line-height:1.1}
@@ -628,7 +683,15 @@ footer{background:var(--black);color:var(--white);padding:48px 40px 32px;text-al
 <div class="modal-overlay" id="modalOverlay">
   <div class="modal">
     <button class="modal-close" onclick="closeProduct()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
-    <div class="modal-img"><img id="modalImg" src="" alt=""></div>
+    <div class="modal-img-col">
+      <div class="modal-img" id="modalImgWrap">
+        <img id="modalImg" src="" alt="">
+        <button class="modal-arrow prev" onclick="prevImg()" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button>
+        <button class="modal-arrow next" onclick="nextImg()" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
+        <div class="modal-dots" id="modalDots"></div>
+      </div>
+      <div class="modal-thumbs hidden" id="modalThumbs"></div>
+    </div>
     <div class="modal-details">
       <div class="modal-category" id="modalCat"></div><h2 class="modal-name" id="modalName"></h2>
       <p class="modal-desc" id="modalDesc"></p>
@@ -688,9 +751,35 @@ var activeCat='Todos';
 function filterCat(cat,btn){activeCat=cat;document.querySelectorAll('.cat-btn').forEach(function(b){b.classList.remove('active')});btn.classList.add('active');applyFilters()}
 function searchProducts(q){document.querySelectorAll('.nav-search input,#mainSearch').forEach(function(inp){if(inp!==document.activeElement)inp.value=q});applyFilters()}
 function applyFilters(){var q=(document.getElementById('mainSearch').value||'').toLowerCase().trim();var cards=document.querySelectorAll('.product-card');var found=0;cards.forEach(function(c){var nm=!q||c.dataset.name.toLowerCase().includes(q)||c.dataset.cat.toLowerCase().includes(q);var cm=activeCat==='Todos'||c.dataset.cat===activeCat;c.classList.toggle('hidden',!(nm&&cm));if(nm&&cm)found++});document.getElementById('noResults').style.display=found===0?'block':'none'}
-var currentProduct={};
-function openProduct(el){var p=parseInt(el.dataset.price);currentProduct={name:el.dataset.name,desc:el.dataset.desc,price:p,cat:el.dataset.cat,img:el.dataset.img,size:el.dataset.size||'Único'};document.getElementById('modalImg').src=currentProduct.img;document.getElementById('modalName').textContent=currentProduct.name;document.getElementById('modalDesc').textContent=currentProduct.desc;document.getElementById('modalPrice').textContent='$'+p.toLocaleString('es-AR');document.getElementById('modalCat').textContent=currentProduct.cat;document.getElementById('modalSize').textContent=currentProduct.size;document.getElementById('modalOverlay').classList.add('open');document.body.style.overflow='hidden'}
+var currentProduct={};var currentImgs=[];var currentImgIdx=0;
+function setImg(idx){
+  if(!currentImgs.length)return;
+  if(idx<0)idx=currentImgs.length-1;if(idx>=currentImgs.length)idx=0;
+  currentImgIdx=idx;
+  document.getElementById('modalImg').src=currentImgs[idx];
+  var dots=document.getElementById('modalDots').children;for(var i=0;i<dots.length;i++)dots[i].classList.toggle('active',i===idx);
+  var thumbs=document.getElementById('modalThumbs').children;for(var j=0;j<thumbs.length;j++)thumbs[j].classList.toggle('active',j===idx)
+}
+function prevImg(){setImg(currentImgIdx-1)}
+function nextImg(){setImg(currentImgIdx+1)}
+function openProduct(el){
+  var p=parseInt(el.dataset.price);
+  var imgs=[];try{imgs=JSON.parse(el.dataset.imgs||'[]')}catch(e){imgs=[]}
+  if(!imgs.length)imgs=[el.dataset.img];
+  currentImgs=imgs;currentImgIdx=0;
+  currentProduct={name:el.dataset.name,desc:el.dataset.desc,price:p,cat:el.dataset.cat,img:imgs[0],imgs:imgs,size:el.dataset.size||'Único'};
+  var wrap=document.getElementById('modalImgWrap');wrap.classList.toggle('has-many',imgs.length>1);
+  var dotsEl=document.getElementById('modalDots');dotsEl.innerHTML='';
+  var thumbsEl=document.getElementById('modalThumbs');thumbsEl.innerHTML='';thumbsEl.classList.toggle('hidden',imgs.length<=1);
+  imgs.forEach(function(src,i){
+    var dot=document.createElement('span');if(i===0)dot.classList.add('active');dot.onclick=function(){setImg(i)};dotsEl.appendChild(dot);
+    var th=document.createElement('div');th.className='modal-thumb'+(i===0?' active':'');th.innerHTML='<img src="'+src+'" alt="">';th.onclick=function(){setImg(i)};thumbsEl.appendChild(th)
+  });
+  document.getElementById('modalImg').src=imgs[0];
+  document.getElementById('modalName').textContent=currentProduct.name;document.getElementById('modalDesc').textContent=currentProduct.desc;document.getElementById('modalPrice').textContent='$'+p.toLocaleString('es-AR');document.getElementById('modalCat').textContent=currentProduct.cat;document.getElementById('modalSize').textContent=currentProduct.size;document.getElementById('modalOverlay').classList.add('open');document.body.style.overflow='hidden'
+}
 function closeProduct(){document.getElementById('modalOverlay').classList.remove('open');document.body.style.overflow=''}
+document.addEventListener('keydown',function(e){if(!document.getElementById('modalOverlay').classList.contains('open'))return;if(e.key==='ArrowLeft')prevImg();if(e.key==='ArrowRight')nextImg();if(e.key==='Escape')closeProduct()});
 function consultWa(){window.open('https://wa.me/'+WA+'?text='+encodeURIComponent('Hola, estoy interesado en '+currentProduct.name),'_blank')}
 var cart=[];
 try{var saved=sessionStorage.getItem('napolitano_cart');if(saved)cart=JSON.parse(saved)}catch(e){}
@@ -757,8 +846,15 @@ function renderAdmin(products, orders) {
   const catOptions = categories.map(c => `<option value="${c}">${c}</option>`).join('');
   
   const productRows = products.map(p => {
-    const img = p.image ? `<img src="${p.image}" style="width:50px;height:65px;object-fit:cover">` : '<div style="width:50px;height:65px;background:#333;display:flex;align-items:center;justify-content:center;font-size:10px;color:#666">Sin foto</div>';
-    return `<tr data-id="${p.id}" class="${p.active ? '' : 'inactive'}">
+    const imgs = p.imagesArr || [];
+    const firstImg = imgs[0] || p.image;
+    const countBadge = imgs.length > 1 ? `<span style="position:absolute;bottom:2px;right:2px;background:#fff;color:#111;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;line-height:1.4">+${imgs.length - 1}</span>` : '';
+    const img = firstImg
+      ? `<div style="position:relative;width:50px;height:65px"><img src="${firstImg}" style="width:50px;height:65px;object-fit:cover">${countBadge}</div>`
+      : '<div style="width:50px;height:65px;background:#333;display:flex;align-items:center;justify-content:center;font-size:10px;color:#666">Sin foto</div>';
+    const desc = (p.description || '').replace(/"/g, '&quot;');
+    const imgsAttr = JSON.stringify(imgs).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+    return `<tr data-id="${p.id}" data-desc="${desc}" data-images="${imgsAttr}" class="${p.active ? '' : 'inactive'}">
       <td>${img}</td><td>${p.name}</td><td>${p.category}</td><td>$${p.price.toLocaleString('es-AR')}</td><td>${p.size || 'Único'}</td><td>${p.badge || '-'}</td>
       <td><span class="status ${p.active ? 'on' : 'off'}">${p.active ? 'Activo' : 'Oculto'}</span></td>
       <td class="actions">
@@ -829,6 +925,13 @@ tr.inactive{opacity:0.5}
 .admin-modal{background:#111;border:1px solid #333;width:min(600px,94vw);max-height:90vh;overflow-y:auto;padding:32px}
 .admin-modal h3{font-family:'Bebas Neue',sans-serif;font-size:22px;letter-spacing:2px;margin-bottom:20px}
 .toast{position:fixed;bottom:24px;right:24px;background:#1a3a1a;color:#4caf50;padding:14px 24px;font-size:12px;letter-spacing:1px;opacity:0;transition:opacity 0.3s;z-index:300}.toast.show{opacity:1}
+.img-gallery{display:flex;flex-wrap:wrap;gap:10px;padding:10px;background:#0a0a0a;border:1px solid #333;min-height:90px;align-items:flex-start}
+.img-gallery .img-item{position:relative;width:70px;height:90px}
+.img-gallery .img-item img{width:100%;height:100%;object-fit:cover;border:1px solid #222}
+.img-gallery .img-item.primary::before{content:'PRINCIPAL';position:absolute;top:0;left:0;right:0;background:#4caf50;color:#000;font-size:8px;text-align:center;padding:2px 0;letter-spacing:1px;font-weight:700}
+.img-gallery .remove-img{position:absolute;top:-6px;right:-6px;width:20px;height:20px;border-radius:50%;background:#e53935;color:#fff;border:none;cursor:pointer;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+.img-gallery .remove-img:hover{background:#c62828}
+.img-gallery .empty{color:#666;font-size:11px;padding:20px;width:100%;text-align:center}
 @media(max-width:768px){.admin-body{padding:16px}.form-grid{grid-template-columns:1fr}.admin-header{padding:12px 16px}.tabs{flex-wrap:wrap}}
 </style></head><body>
 <div class="admin-header">
@@ -850,7 +953,7 @@ tr.inactive{opacity:0.5}
           <div class="form-group"><label>Categoría</label><select name="category">${catOptions}</select></div>
           <div class="form-group"><label>Talle</label><input name="size" value="Único" placeholder="Único / S,M,L,XL"></div>
           <div class="form-group"><label>Badge</label><input name="badge" placeholder="Nuevo, Popular, Combo..."></div>
-          <div class="form-group"><label>Imagen</label><input name="image" type="file" accept="image/*"></div>
+          <div class="form-group full"><label>Imágenes (podés seleccionar varias)</label><input name="images" type="file" accept="image/*" multiple><small style="color:#666;font-size:10px;margin-top:4px">La primera imagen será la principal. Hasta 10 fotos por producto.</small></div>
           <div class="form-group full"><label>Descripción</label><textarea name="description" placeholder="Descripción del producto..."></textarea></div>
         </div>
         <button type="submit" class="btn-primary">Agregar Producto</button>
@@ -885,7 +988,8 @@ tr.inactive{opacity:0.5}
         <div class="form-group"><label>Categoría</label><select id="editCategory">${catOptions}</select></div>
         <div class="form-group"><label>Talle</label><input id="editSize"></div>
         <div class="form-group"><label>Badge</label><input id="editBadge"></div>
-        <div class="form-group"><label>Nueva imagen (opcional)</label><input id="editImage" type="file" accept="image/*"></div>
+        <div class="form-group full"><label>Imágenes actuales</label><div id="editGallery" class="img-gallery"></div></div>
+        <div class="form-group full"><label>Agregar más imágenes</label><input id="editImage" type="file" accept="image/*" multiple><small style="color:#666;font-size:10px;margin-top:4px">Tocá la X de una imagen para eliminarla. La primera es la principal.</small></div>
         <div class="form-group full"><label>Descripción</label><textarea id="editDesc"></textarea></div>
       </div>
       <button type="submit" class="btn-primary">Guardar Cambios</button>
@@ -902,6 +1006,17 @@ function addProduct(e){
   fetch('/api/products',{method:'POST',body:fd}).then(r=>r.json()).then(d=>{if(d.ok){toast('Producto agregado');setTimeout(()=>location.reload(),500)}else toast('Error')}).catch(()=>toast('Error'));return false}
 function toggleProduct(id){
   fetch('/api/products/'+id+'/toggle',{method:'PUT'}).then(r=>r.json()).then(d=>{if(d.ok){toast(d.active?'Producto activado':'Producto oculto');setTimeout(()=>location.reload(),500)}}).catch(()=>toast('Error'))}
+var editImagesState=[];
+function renderGallery(){
+  var gal=document.getElementById('editGallery');gal.innerHTML='';
+  if(!editImagesState.length){gal.innerHTML='<div class="empty">Sin imágenes. Subí al menos una abajo.</div>';return}
+  editImagesState.forEach(function(src,idx){
+    var div=document.createElement('div');div.className='img-item'+(idx===0?' primary':'');
+    div.innerHTML='<img src="'+src+'" alt=""><button type="button" class="remove-img" data-idx="'+idx+'">×</button>';
+    div.querySelector('.remove-img').onclick=function(){editImagesState.splice(idx,1);renderGallery()};
+    gal.appendChild(div)
+  })
+}
 function editProduct(id){
   var row=document.querySelector('tr[data-id="'+id+'"]');if(!row)return;
   var cells=row.querySelectorAll('td');
@@ -911,13 +1026,19 @@ function editProduct(id){
   document.getElementById('editPrice').value=parseInt(cells[3].textContent.replace(/[^0-9]/g,''));
   document.getElementById('editSize').value=cells[4].textContent;
   document.getElementById('editBadge').value=cells[5].textContent==='-'?'':cells[5].textContent;
+  document.getElementById('editDesc').value=row.dataset.desc||'';
+  document.getElementById('editImage').value='';
+  try{editImagesState=JSON.parse(row.dataset.images||'[]')}catch(e){editImagesState=[]}
+  renderGallery();
   document.getElementById('editModal').classList.add('open')}
 function updateProduct(e){
   e.preventDefault();var id=document.getElementById('editId').value;var fd=new FormData();
   fd.append('name',document.getElementById('editName').value);fd.append('price',document.getElementById('editPrice').value);
   fd.append('category',document.getElementById('editCategory').value);fd.append('size',document.getElementById('editSize').value);
   fd.append('badge',document.getElementById('editBadge').value);fd.append('description',document.getElementById('editDesc').value);
-  var img=document.getElementById('editImage').files[0];if(img)fd.append('image',img);
+  fd.append('existingImages',JSON.stringify(editImagesState));
+  var files=document.getElementById('editImage').files;
+  for(var i=0;i<files.length;i++){fd.append('images',files[i])}
   fetch('/api/products/'+id,{method:'PUT',body:fd}).then(r=>r.json()).then(d=>{if(d.ok){toast('Producto actualizado');setTimeout(()=>location.reload(),500)}}).catch(()=>toast('Error'));return false}
 function deleteProduct(id){if(!confirm('¿Eliminar este producto?'))return;
   fetch('/api/products/'+id,{method:'DELETE'}).then(r=>r.json()).then(d=>{if(d.ok){toast('Producto eliminado');setTimeout(()=>location.reload(),500)}}).catch(()=>toast('Error'))}
