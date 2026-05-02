@@ -452,7 +452,7 @@ function getOrders() {
 
 // ─── RENDER FUNCTIONS ───
 function renderStore(products, categories) {
-  const allCats = ['Todos', 'Remeras', 'Bermudas', 'Buzos', 'Pantalones', 'Conjuntos', 'Zapatillas', 'Accesorios', 'Perfumes'];
+  const allCats = ['Todos', 'Remeras', 'Bermudas', 'Buzos', 'Camperas', 'Pantalones', 'Conjuntos', 'Zapatillas', 'Accesorios', 'Perfumes'];
   
   const productCards = products.map(p => {
     const imgs = (p.imagesArr && p.imagesArr.length) ? p.imagesArr : [p.image || '/public/placeholder.png'];
@@ -842,7 +842,7 @@ ${error ? '<div class="error">' + error + '</div>' : ''}
 }
 
 function renderAdmin(products, orders) {
-  const categories = ['Remeras','Bermudas','Buzos','Pantalones','Conjuntos','Zapatillas','Accesorios','Perfumes'];
+  const categories = ['Remeras','Bermudas','Buzos','Camperas','Pantalones','Conjuntos','Zapatillas','Accesorios','Perfumes'];
   const catOptions = categories.map(c => `<option value="${c}">${c}</option>`).join('');
   
   const productRows = products.map(p => {
